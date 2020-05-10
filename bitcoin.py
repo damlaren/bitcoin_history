@@ -1,6 +1,7 @@
 import csv
 import datetime
 import math
+import random
 
 
 data_fn = 'C:\\Projects\\bitcoin\\data.csv'
@@ -90,13 +91,13 @@ class Wallet:
 
         damage = price * amount
         if damage > self.capital:
-            print('Cannot buy! Not enough funds.')
-            return
+            return False
         self.capital -= damage
         if price in self.holdings:
             self.holdings[price] += amount
         else:
             self.holdings[price] = amount
+        return True
 
     def sell(self, buy_price, sell_price, amount):
         """Sell coin.
@@ -115,8 +116,19 @@ class Wallet:
         else:
             self.holdings[buy_price] = self.holdings[buy_price] - amount
 
+    def take_profits(self, sell_price, min_profit):
+        """Sell coins to realize profits.
 
-def buylow_sellhigh(btc_data, capital, interval_size, min_profit):
+        :param sell_price: Price at which to sell coins.
+        :param min_profit: Minimum profit to accept per coin.
+        """
+        sells = [(k, v) for k, v in self.holdings.items()]
+        for s in sells:
+            if sell_price - s[0] >= min_profit:
+                self.sell(s[0], sell_price, s[1])
+
+
+def buylow_sellhigh(btc_data, capital, interval_size, max_price, buy_size, min_profit):
     """Algorithm that buys as prices go down, sells as they go up.
 
     Commission fees are ignored.
@@ -124,6 +136,8 @@ def buylow_sellhigh(btc_data, capital, interval_size, min_profit):
     :param btc_data: BTC data.
     :param capital: Starting capital.
     :param interval_size: Buy some coin when it drops every `interval` $.
+    :param max_price: Maximum price to pay per coin.
+    :param buy_size: Amount to buy at once, as a fixed $ amount.
     :param min_profit: Minimum profit to accept before selling 1 coin.
     """
     assert interval_size > 0
@@ -140,22 +154,13 @@ def buylow_sellhigh(btc_data, capital, interval_size, min_profit):
         # Detect interval crossing (only buy or sell at interval)
         curr_interval = int(curr_price / interval_size)
         if curr_interval > last_interval:
-            # Price went up. Sell all coins that meet minimum profit threshold.
-            sells = [(k, v) for k, v in wallet.holdings.items()]
-            for s in sells:
-                sell_price = curr_interval * interval_size
-                if sell_price - s[0] >= min_profit:
-                    wallet.sell(s[0], sell_price, s[1])
+            sell_price = curr_interval * interval_size
+            wallet.take_profits(sell_price, min_profit)
         elif curr_interval < last_interval:
             # Price went down. Buy a fixed amount more than the next highest holding.
-            # TODO: parameterize how much more to buy.
             crossed_price = (curr_interval + 1) * interval_size
-            if crossed_price <= 10000.0:
-                next_price = crossed_price + interval_size
-                amount_held_next_price = 0
-                if next_price in wallet.holdings:
-                    amount_held_next_price = wallet.holdings[next_price]
-                target_buy = amount_held_next_price + .05
+            if crossed_price <= max_price:
+                target_buy = buy_size / crossed_price
                 if crossed_price in wallet.holdings:
                     target_buy = max(0, target_buy - wallet.holdings[crossed_price])
                 if target_buy > 0:
@@ -164,7 +169,32 @@ def buylow_sellhigh(btc_data, capital, interval_size, min_profit):
         # Prepare for next iteration.
         last_interval = curr_interval
 
-    # End: sell all btc at 'last_price'
+    print(f'Final holdings: ${wallet.holdings}')
+    print(f'Final capital: ${wallet.capital}')
+    print(f'Final gains: ${wallet.gains}')
+
+
+def buy_random(btc_data, capital, chance, max_price, buy_size, min_profit):
+    """Buy BTC at random times, sell it when profit is realized.
+
+    :param btc_data: BTC data.
+    :param capital: Starting capital.
+    :param chance: Chance to buy on each timepoint, as a float between 0 and 1.
+    :param max_price: Maximum price to pay per coin.
+    :param buy_size: Amount to buy at once, as a fixed $ amount.
+    :param min_profit: Minimum profit to take.
+    """
+    wallet = Wallet(capital)
+    n_points = len(btc_data)
+    for i in range(1, n_points):
+        curr_price = btc_data[i][1]
+        if math.isnan(curr_price):
+            continue
+        if random.random() < chance:
+            if curr_price < max_price:
+                wallet.buy(curr_price, buy_size / curr_price)
+        wallet.take_profits(curr_price, min_profit)
+
     print(f'Final holdings: ${wallet.holdings}')
     print(f'Final capital: ${wallet.capital}')
     print(f'Final gains: ${wallet.gains}')
@@ -172,10 +202,16 @@ def buylow_sellhigh(btc_data, capital, interval_size, min_profit):
 
 def main():
     btc_data = read_data()
-    capital = 50000
+    capital = 40000
     interval_size = 500
     min_profit = 500
-    buylow_sellhigh(btc_data, capital, interval_size, min_profit)
+    buy_size = 5000
+    max_price = 10000
+    n_trials = 10
+
+    #buylow_sellhigh(btc_data, capital, interval_size, max_price, buy_size, min_profit)
+    for i in range(n_trials):
+        buy_random(btc_data, capital, 1.0 / (1440.0 * 3.5), max_price, buy_size, min_profit)
 
 
 if __name__ == '__main__':
